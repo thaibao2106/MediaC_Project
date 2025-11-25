@@ -1,3 +1,4 @@
+// frontend/src/AnalyticsModule.js
 import axios from "axios";
 import Papa from "papaparse";
 import { useState } from "react";
@@ -43,6 +44,23 @@ import { ArcElement, Chart as ChartJS, Legend, Tooltip } from "chart.js";
 ChartJS.register(ArcElement, Tooltip, Legend);
 
 const API_BASE_URL = "http://localhost:8000/analytics";
+
+// === HÀM HELPER XỬ LÝ LỖI (ĐỂ SỬA LỖI MÀN HÌNH ĐỎ) ===
+const getErrorMessage = (error) => {
+  if (error.response?.data?.detail) {
+    // Lỗi từ FastAPI (HTTPException)
+    return error.response.data.detail;
+  }
+  if (error.response?.data?.message) {
+    // Lỗi 4xx/5xx từ API (ví dụ: NewsAPI)
+    return error.response.data.message;
+  }
+  if (error.message) {
+    // Lỗi JS (Network error, etc.)
+    return error.message;
+  }
+  return "Lỗi không xác định.";
+};
 
 function AnalyticsModule() {
   const [text, setText] = useState("");
@@ -142,6 +160,7 @@ function AnalyticsModule() {
           limit: 40,
         });
         if (response.data.status === "success") {
+          if (response.data.message) setError(response.data.message); // Hiển thị thông báo (ví dụ: không tìm thấy)
           processResults(
             response.data.sentiments,
             response.data.topics,
@@ -206,13 +225,10 @@ function AnalyticsModule() {
           setError("Lỗi khi phân tích: " + errorMessages.join("; "));
         }
       }
-    } catch (error) {
-      console.error("Lỗi:", error);
-      if (error.code === "ERR_NETWORK") {
-        setError("Không thể kết nối.");
-      } else {
-        setError(error.response?.data?.detail || "Lỗi không xác định.");
-      }
+    } catch (err) {
+      // <-- SỬA LỖI Ở ĐÂY
+      console.error("Lỗi:", err);
+      setError(getErrorMessage(err)); // Dùng hàm helper
     } finally {
       setIsLoading(false);
     }
@@ -392,7 +408,6 @@ function AnalyticsModule() {
             <Typography variant="h6" gutterBottom>
               Phân tích Cảm xúc
             </Typography>
-            {/* Biểu đồ tròn */}
             {sentimentData ? (
               <Box
                 sx={{
@@ -423,13 +438,11 @@ function AnalyticsModule() {
               </Box>
             )}
             <Divider sx={{ mb: 1 }} />
-            {/* Thống kê % */}
             {sentimentCounts ? (
               <List
                 dense
                 sx={{ height: "calc(50% - 25px)", overflowY: "auto" }}
               >
-                {/* LIST ITEM CỦA TÍCH CỰC */}
                 <ListItem>
                   <ListItemIcon>
                     <CheckCircleIcon color="success" />
@@ -505,7 +518,6 @@ function AnalyticsModule() {
 
         {/* === CỘT 3: CHỦ ĐỀ & GOM CỤM (md={5}) === */}
         <Grid item xs={12} md={5}>
-          {/* Ô 1: CHỦ ĐỀ NỔI BẬT */}
           <Paper sx={{ p: 2, height: "calc(50vh - 66px)", mb: 3 }}>
             <Typography variant="h6" gutterBottom>
               Chủ đề Nổi bật (Cụm từ)
@@ -536,8 +548,6 @@ function AnalyticsModule() {
               </Box>
             )}
           </Paper>
-
-          {/* Ô 2: GOM CỤM */}
           {clusterResults && (
             <Paper sx={{ p: 2, height: "calc(50vh - 66px)" }}>
               <Typography variant="h6" gutterBottom>
@@ -630,8 +640,7 @@ function AnalyticsModule() {
             </Paper>{" "}
           </Grid>
         )}
-      </Grid>{" "}
-      {/* Kết thúc Grid container chính */}
+      </Grid>
     </Box>
   );
 }

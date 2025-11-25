@@ -1,75 +1,138 @@
 # backend/routers/content_studio.py
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from typing import Optional
 import os
-import openai
+import openai  # Dùng thư viện openai để gọi Groq
 from dotenv import load_dotenv
+import requests
+import io
+import base64
+from PIL import Image
 
 # --- KHỞI TẠO ROUTER ---
 router = APIRouter(
-    prefix="/content", # Tiền tố /content/...
+    prefix="/content",
     tags=["Content Studio Module 1"]
 )
 
-# --- CẤU HÌNH OPENAI ---
-# Load key từ .env (đã load ở main.py nhưng load lại cho chắc)
+# --- CẤU HÌNH API KEYS ---
 load_dotenv()
-openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+STABILITY_API_KEY = os.getenv("STABILITY_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+# Cấu hình Client cho Groq (Dùng chuẩn OpenAI)
+if GROQ_API_KEY:
+    groq_client = openai.OpenAI(
+        base_url="https://api.groq.com/openai/v1",
+        api_key=GROQ_API_KEY
+    )
+else:
+    groq_client = None
 
 # --- ĐỊNH NGHĨA INPUT ---
-class GenerateInput(BaseModel):
-    prompt: str
-    task_type: str # Ví dụ: "Slogan", "Blog Post", "Email", "Facebook Post"
+class TextGenerateInput(BaseModel):
+    prompt: str; task_type: str
 
-# --- API ENDPOINT CHO MODULE 1 ---
-@router.post("/generate") # Đường dẫn sẽ là /content/generate
-async def generate_content_route(input_data: GenerateInput):
-    """ Nhận prompt và task_type, gọi OpenAI để tạo nội dung. """
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") # Kiểm tra lại key
-    if not OPENAI_API_KEY:
-        raise HTTPException(status_code=503, detail="OPENAI_API_KEY chưa được cấu hình.")
+class ImageFromTextInput(BaseModel):
+    prompt: str; negative_prompt: str = ""; style_preset: Optional[str] = ""
 
-    # Xây dựng System Prompt dựa trên task_type
-    system_prompt = "Bạn là một trợ lý AI chuyên nghiệp về Marketing và Truyền thông tại Việt Nam."
-    if input_data.task_type == "Slogan":
-        system_prompt += " Hãy viết các slogan thật ngắn gọn, ấn tượng, và độc đáo."
-    elif input_data.task_type == "Blog Post":
-        system_prompt += " Hãy viết một bài blog chuẩn SEO, có tiêu đề hấp dẫn, cấu trúc rõ ràng với các đề mục H2, H3, và nội dung chất lượng."
-    elif input_data.task_type == "Email":
-         system_prompt += " Hãy viết một email marketing chuyên nghiệp, cá nhân hóa (nếu có thể), và có lời kêu gọi hành động (CTA) rõ ràng."
-    elif input_data.task_type == "Facebook Post":
-         system_prompt += " Hãy viết một bài đăng Facebook thu hút, có thể kèm theo emoji phù hợp, và hashtag liên quan."
-    # Thêm các case khác nếu muốn
+class ImageFromImageInput(BaseModel):
+    prompt: str; init_image_base64: str; strength: float = 0.6; negative_prompt: str = ""
 
-    print(f"[Content Route] Generating content for task: {input_data.task_type}")
+class ImageUpscaleInput(BaseModel):
+    init_image_base64: str
+
+# === HÀM HELPER: GỌI GROQ ĐỂ XỬ LÝ VĂN BẢN (Thay thế HF) ===
+def query_groq_text(system_content, user_content):
+    if not groq_client:
+        raise HTTPException(status_code=503, detail="GROQ_API_KEY chưa được cấu hình.")
+    
     try:
-        completion = openai_client.chat.completions.create(
-            model="gpt-3.5-turbo", # Hoặc gpt-4o
+        completion = groq_client.chat.completions.create(
+            model="llama-3.1-8b-instant", # <-- ĐÃ CẬP NHẬT MODEL MỚI NHẤT
             messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": input_data.prompt}
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": user_content}
             ],
-            temperature=0.7 # Tăng một chút sáng tạo
+            temperature=0.7,
+            max_tokens=1024,
         )
-        generated_text = completion.choices[0].message.content
-        
-        # Kiểm tra xem OpenAI có trả về nội dung không
-        if not generated_text:
-             raise HTTPException(status_code=500, detail="OpenAI không trả về nội dung.")
-
-        return {"status": "success", "generated_text": generated_text.strip()}
-
-    except openai.AuthenticationError as e:
-        print(f"Lỗi OpenAI Authentication: {e}")
-        raise HTTPException(status_code=401, detail=f"Lỗi xác thực OpenAI: API Key không hợp lệ hoặc hết hạn.")
-    except openai.RateLimitError as e:
-        print(f"Lỗi OpenAI Rate Limit: {e}")
-        raise HTTPException(status_code=429, detail=f"Lỗi giới hạn truy cập OpenAI: Bạn đã gửi quá nhiều yêu cầu.")
+        return completion.choices[0].message.content
     except Exception as e:
-        print(f"Lỗi /content/generate: {e}")
-        # Trả về lỗi cụ thể hơn nếu có thể
-        error_detail = f"Lỗi không xác định khi gọi API OpenAI: {e}"
-        status_code = 500
-        # Cố gắng bắt các lỗi mạng hoặc lỗi API khác từ OpenAI nếu có thể
-        # Ví dụ: if isinstance(e, openai.APIConnectionError): ...
-        raise HTTPException(status_code=status_code, detail=error_detail)
+        print(f"Lỗi Groq: {e}")
+        raise HTTPException(status_code=500, detail=f"Lỗi Groq API: {str(e)}")
+
+# === HÀM DỊCH THUẬT (DÙNG GROQ) ===
+def translate_prompt_to_english(prompt: str) -> str:
+    try:
+        prompt.encode(encoding='ascii')
+        return prompt
+    except UnicodeEncodeError:
+        print(f"[Translate] Đang dịch: '{prompt}'")
+        system_msg = "You are a translator. Translate the following Vietnamese text to English. Return ONLY the translation, no explanation text."
+        return query_groq_text(system_msg, prompt).replace('"', '').strip()
+
+# === CÁC HÀM STABILITY AI (GIỮ NGUYÊN KHÔNG ĐỔI) ===
+def check_stability_key():
+    if not STABILITY_API_KEY: raise HTTPException(status_code=503, detail="STABILITY_API_KEY thiếu.")
+
+def stability_text_to_image(prompt: str, negative_prompt: str, style_preset: str):
+    check_stability_key(); url = "https://api.stability.ai/v1/generation/stable-diffusion-xl-1024-v1-0/text-to-image"; headers = { "Authorization": f"Bearer {STABILITY_API_KEY}", "Accept": "application/json" }; text_prompts = [{"text": prompt, "weight": 1.0}];
+    if negative_prompt: text_prompts.append({"text": negative_prompt, "weight": -1.0});
+    payload = {"text_prompts": text_prompts, "cfg_scale": 7, "height": 1024, "width": 1024, "samples": 1, "steps": 30};
+    if style_preset and style_preset != "": payload["style_preset"] = style_preset;
+    response = requests.post(url, headers=headers, json=payload, timeout=30);
+    if not response.ok: raise HTTPException(status_code=response.status_code, detail=response.json())
+    return response.json()["artifacts"][0]["base64"]
+
+def stability_image_to_image(prompt: str, negative_prompt: str, init_image_bytes: bytes, strength: float):
+    check_stability_key(); url = "https://api.stability.ai/v1/generation/stable-diffusion-xl-1024-v1-0/image-to-image"; headers = {"Authorization": f"Bearer {STABILITY_API_KEY}", "Accept": "application/json"};
+    text_prompts = [{"text": prompt, "weight": 1.0}, {"text": negative_prompt, "weight": -1.0} if negative_prompt else None]; text_prompts = [p for p in text_prompts if p is not None];
+    files = {'init_image': init_image_bytes, 'text_prompts[0][text]': (None, text_prompts[0]['text']), 'text_prompts[1][text]': (None, text_prompts[1]['text']) if len(text_prompts) > 1 else None, 'text_prompts[1][weight]': (None, str(text_prompts[1]['weight'])) if len(text_prompts) > 1 else None, 'image_strength': (None, str(strength)), 'cfg_scale': (None, '7.0'), 'samples': (None, '1'), 'steps': (None, '30')}; files = {k: v for k, v in files.items() if v is not None};
+    response = requests.post(url, headers=headers, files=files, timeout=30);
+    if not response.ok: raise HTTPException(status_code=response.status_code, detail=response.json())
+    return response.json()["artifacts"][0]["base64"]
+
+def stability_upscale_image(init_image_bytes: bytes):
+    check_stability_key(); url = "https://api.stability.ai/v1/generation/esrgan-v1-x2plus/image-to-image/upscale"; headers = {"Authorization": f"Bearer {STABILITY_API_KEY}", "Accept": "application/json"}; files = { 'image': init_image_bytes }; response = requests.post(url, headers=headers, files=files, timeout=30);
+    if not response.ok: raise HTTPException(status_code=response.status_code, detail=response.json())
+    return response.json()["artifacts"][0]["base64"]
+
+
+# --- API 1: TẠO VĂN BẢN (DÙNG GROQ) ---
+@router.post("/generate-text")
+async def generate_text(input_data: TextGenerateInput):
+    system_prompt = "Bạn là trợ lý Marketing chuyên nghiệp tại Việt Nam. Hãy viết nội dung sáng tạo, hấp dẫn bằng tiếng Việt."
+    user_prompt = f"Yêu cầu: {input_data.task_type}. {input_data.prompt}"
+    
+    print("[Content] Gọi Groq (Llama 3.1)...")
+    generated_text = query_groq_text(system_prompt, user_prompt)
+    return {"status": "success", "generated_text": generated_text}
+
+
+# --- API 2, 3, 4: HÌNH ẢNH (Dịch bằng Groq -> Vẽ bằng Stability) ---
+@router.post("/generate-text-to-image")
+def generate_text_to_image(input_data: ImageFromTextInput):
+    try:
+        en_prompt = translate_prompt_to_english(input_data.prompt)
+        img = stability_text_to_image(en_prompt, input_data.negative_prompt, input_data.style_preset)
+        return {"status": "success", "image_base64": img}
+    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/generate-image-to-image")
+def generate_image_to_image(input_data: ImageFromImageInput):
+    try:
+        en_prompt = translate_prompt_to_english(input_data.prompt)
+        img_bytes = io.BytesIO(base64.b64decode(input_data.init_image_base64.split(',')[-1]))
+        img = stability_image_to_image(en_prompt, input_data.negative_prompt, img_bytes, input_data.strength)
+        return {"status": "success", "image_base64": img}
+    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/upscale-image")
+def upscale_image(input_data: ImageUpscaleInput):
+    try:
+        img_bytes = io.BytesIO(base64.b64decode(input_data.init_image_base64.split(',')[-1]))
+        img = stability_upscale_image(img_bytes)
+        return {"status": "success", "image_base64": img}
+    except Exception as e: raise HTTPException(status_code=500, detail=str(e))

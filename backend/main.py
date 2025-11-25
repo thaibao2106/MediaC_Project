@@ -39,5 +39,6 @@ def read_root():
 # from fastapi.staticfiles import StaticFiles
 # app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Lệnh chạy server (trong terminal, ở thư mục backend, đã kích hoạt venv):
+# Lệnh chạy server (trong terminal, ở thư mục backend, đã kích hoạt venv):\
+    # .\venv\Scripts\activate
 # uvicorn main:app --reload
