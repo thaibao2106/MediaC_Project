@@ -1,11 +1,13 @@
 // frontend/src/PersonalizationModule.js
 import ArticleIcon from "@mui/icons-material/Article";
-import CloseIcon from "@mui/icons-material/Close";
 import HistoryIcon from "@mui/icons-material/History";
+import LoginIcon from "@mui/icons-material/Login";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
+import PersonIcon from "@mui/icons-material/Person";
 import RecommendIcon from "@mui/icons-material/Recommend";
 import {
   Alert,
+  Avatar,
   Box,
   Button,
   Card,
@@ -19,6 +21,7 @@ import {
   Divider,
   Grid,
   Paper,
+  TextField,
   Typography,
 } from "@mui/material";
 import axios from "axios";
@@ -27,41 +30,72 @@ import { useEffect, useState } from "react";
 const API_BASE_URL = "http://localhost:8000/personalization";
 
 function PersonalizationModule() {
-  const [articles, setArticles] = useState([]); // Tất cả bài báo
-  const [viewedIds, setViewedIds] = useState([]); // Lịch sử đã xem (IDs)
-  const [recommendations, setRecommendations] = useState([]); // Gợi ý
-  const [error, setError] = useState(null);
+  // State User
+  const [username, setUsername] = useState("demo_user");
+  const [currentUser, setCurrentUser] = useState(null); // { id, username }
 
-  // State cho việc Đọc bài (Dialog)
+  // State Data
+  const [articles, setArticles] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [recommendations, setRecommendations] = useState([]);
+
+  // State UI
+  const [error, setError] = useState(null);
   const [openDialog, setOpenDialog] = useState(false);
   const [readingArticle, setReadingArticle] = useState(null);
 
-  // Tải danh sách bài báo ban đầu
+  // 1. Khởi tạo: Tải danh sách bài báo
   useEffect(() => {
     fetchArticles();
   }, []);
 
-  // Mỗi khi lịch sử thay đổi, gọi API gợi ý lại
+  // 2. Khi đăng nhập thành công: Tải lịch sử và gợi ý
   useEffect(() => {
-    if (viewedIds.length > 0) {
+    if (currentUser) {
+      fetchHistory();
       fetchRecommendations();
     }
-  }, [viewedIds]);
+  }, [currentUser]);
+
+  // === CÁC HÀM GỌI API ===
+  const handleLogin = async () => {
+    if (!username.trim()) return;
+    try {
+      const res = await axios.post(`${API_BASE_URL}/login`, { username });
+      if (res.data.status === "success") {
+        setCurrentUser({ id: res.data.user_id, username: res.data.username });
+        setError(null);
+      }
+    } catch (err) {
+      setError("Lỗi đăng nhập.");
+    }
+  };
 
   const fetchArticles = async () => {
     try {
       const res = await axios.get(`${API_BASE_URL}/articles`);
       if (res.data.status === "success") setArticles(res.data.articles);
     } catch (err) {
-      setError("Lỗi tải bài báo (Kiểm tra Backend/Database).");
+      setError("Lỗi tải bài báo.");
+    }
+  };
+
+  const fetchHistory = async () => {
+    if (!currentUser) return;
+    try {
+      const res = await axios.get(`${API_BASE_URL}/history/${currentUser.id}`);
+      if (res.data.status === "success") setHistory(res.data.history);
+    } catch (err) {
+      console.error(err);
     }
   };
 
   const fetchRecommendations = async () => {
+    if (!currentUser) return;
     try {
-      const res = await axios.post(`${API_BASE_URL}/recommend`, {
-        viewed_article_ids: viewedIds,
-      });
+      const res = await axios.get(
+        `${API_BASE_URL}/recommend/${currentUser.id}`
+      );
       if (res.data.status === "success")
         setRecommendations(res.data.recommendations);
     } catch (err) {
@@ -69,24 +103,38 @@ function PersonalizationModule() {
     }
   };
 
-  // Xử lý khi click vào bài báo
-  const handleReadArticle = (article) => {
-    // 1. Mở cửa sổ đọc
+  const handleReadArticle = async (article) => {
+    if (!currentUser) {
+      setError(
+        "Vui lòng nhập tên và đăng nhập trước để hệ thống ghi nhận sở thích!"
+      );
+      return;
+    }
+
+    // Mở dialog đọc
     setReadingArticle(article);
     setOpenDialog(true);
 
-    // 2. Thêm vào lịch sử (AI học)
-    if (!viewedIds.includes(article.id)) {
-      setViewedIds([...viewedIds, article.id]);
+    // Gửi log lên server
+    try {
+      await axios.post(`${API_BASE_URL}/log_view`, {
+        user_id: currentUser.id,
+        article_id: article.id,
+      });
+      // Cập nhật lại giao diện ngay lập tức
+      fetchHistory();
+      fetchRecommendations();
+    } catch (err) {
+      console.error("Lỗi lưu lịch sử", err);
     }
   };
 
+  // ... (Phần handleCloseDialog và ArticleCard giữ nguyên như cũ) ...
   const handleCloseDialog = () => {
     setOpenDialog(false);
     setReadingArticle(null);
   };
 
-  // Component hiển thị 1 bài báo nhỏ
   const ArticleCard = ({ article, isRecommendation = false, onClick }) => (
     <Card
       sx={{
@@ -114,14 +162,8 @@ function PersonalizationModule() {
             )}
           </Box>
           <Typography
-            variant="h6"
-            component="div"
-            sx={{
-              fontSize: "1.05rem",
-              fontWeight: "bold",
-              lineHeight: 1.3,
-              mb: 0.5,
-            }}
+            variant="subtitle1"
+            sx={{ fontWeight: "bold", lineHeight: 1.2, mb: 1 }}
           >
             {article.title}
           </Typography>
@@ -144,6 +186,61 @@ function PersonalizationModule() {
 
   return (
     <Box sx={{ mt: 3 }}>
+      {/* THANH ĐĂNG NHẬP */}
+      <Paper
+        sx={{
+          p: 2,
+          mb: 3,
+          display: "flex",
+          alignItems: "center",
+          gap: 2,
+          bgcolor: "#f5f5f5",
+        }}
+      >
+        <Avatar sx={{ bgcolor: currentUser ? "primary.main" : "grey.500" }}>
+          <PersonIcon />
+        </Avatar>
+        {currentUser ? (
+          <Box sx={{ flexGrow: 1 }}>
+            <Typography variant="subtitle1">
+              Xin chào, <b>{currentUser.username}</b>!
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              ID: {currentUser.id} • Hệ thống đang cá nhân hóa cho bạn.
+            </Typography>
+          </Box>
+        ) : (
+          <Box sx={{ flexGrow: 1, display: "flex", gap: 1 }}>
+            <TextField
+              size="small"
+              label="Nhập tên người dùng"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              sx={{ width: 300 }}
+            />
+            <Button
+              variant="contained"
+              startIcon={<LoginIcon />}
+              onClick={handleLogin}
+            >
+              Đăng nhập / Tạo mới
+            </Button>
+          </Box>
+        )}
+        {currentUser && (
+          <Button
+            color="error"
+            onClick={() => {
+              setCurrentUser(null);
+              setHistory([]);
+              setRecommendations([]);
+            }}
+          >
+            Đăng xuất
+          </Button>
+        )}
+      </Paper>
+
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
           {error}
@@ -156,7 +253,7 @@ function PersonalizationModule() {
           <Paper
             sx={{
               p: 2,
-              height: "calc(100vh - 120px)",
+              height: "calc(100vh - 200px)",
               overflowY: "auto",
               bgcolor: "#fafafa",
             }}
@@ -166,21 +263,8 @@ function PersonalizationModule() {
               gutterBottom
               sx={{ display: "flex", alignItems: "center" }}
             >
-              <ArticleIcon sx={{ mr: 1 }} /> Kho Tin Tức (MySQL)
+              <ArticleIcon sx={{ mr: 1 }} /> Kho Tin Tức
             </Typography>
-            <Typography
-              variant="caption"
-              color="textSecondary"
-              sx={{ mb: 2, display: "block" }}
-            >
-              Dữ liệu được lấy tự động từ Module Phân tích.
-            </Typography>
-            {articles.length === 0 && (
-              <Typography variant="body2" sx={{ mt: 2 }}>
-                Chưa có tin. Hãy qua Tab <b>Phân tích & Xu hướng</b> để tìm và
-                nạp tin tức!
-              </Typography>
-            )}
             {articles.map((art) => (
               <ArticleCard
                 key={art.id}
@@ -191,54 +275,44 @@ function PersonalizationModule() {
           </Paper>
         </Grid>
 
-        {/* CỘT 2: AI ENGINE (LỊCH SỬ & GỢI Ý) */}
+        {/* CỘT 2: AI ENGINE */}
         <Grid item xs={12} md={8}>
           <Grid container spacing={3} sx={{ height: "100%" }}>
-            {/* LỊCH SỬ ĐỌC */}
             <Grid item xs={12} md={6}>
               <Paper
-                sx={{ p: 2, height: "calc(100vh - 120px)", overflowY: "auto" }}
+                sx={{ p: 2, height: "calc(100vh - 200px)", overflowY: "auto" }}
               >
                 <Typography
                   variant="h6"
                   gutterBottom
                   sx={{ display: "flex", alignItems: "center" }}
                 >
-                  <HistoryIcon sx={{ mr: 1 }} /> Lịch sử Đọc ({viewedIds.length}
-                  )
+                  <HistoryIcon sx={{ mr: 1 }} /> Lịch sử Đọc ({history.length})
                 </Typography>
                 <Divider sx={{ mb: 2 }} />
-                {viewedIds.length === 0 ? (
+                {history.length === 0 && (
                   <Typography
                     color="textSecondary"
                     align="center"
-                    sx={{ mt: 10 }}
+                    sx={{ mt: 5 }}
                   >
-                    Bạn chưa đọc bài nào.
+                    Chưa đọc bài nào.
                   </Typography>
-                ) : (
-                  // Hiển thị ngược (bài mới đọc lên đầu)
-                  [...viewedIds].reverse().map((id) => {
-                    const art = articles.find((a) => a.id === id);
-                    // Truyền hàm rỗng để click vào lịch sử không làm gì (hoặc có thể mở lại dialog nếu muốn)
-                    return art ? (
-                      <ArticleCard
-                        key={id}
-                        article={art}
-                        onClick={handleReadArticle}
-                      />
-                    ) : null;
-                  })
                 )}
+                {history.map((art) => (
+                  <ArticleCard
+                    key={art.id}
+                    article={art}
+                    onClick={handleReadArticle}
+                  />
+                ))}
               </Paper>
             </Grid>
-
-            {/* GỢI Ý TỪ AI */}
             <Grid item xs={12} md={6}>
               <Paper
                 sx={{
                   p: 2,
-                  height: "calc(100vh - 120px)",
+                  height: "calc(100vh - 200px)",
                   overflowY: "auto",
                   bgcolor: "#e3f2fd",
                 }}
@@ -252,49 +326,33 @@ function PersonalizationModule() {
                     color: "#1565c0",
                   }}
                 >
-                  <RecommendIcon sx={{ mr: 1 }} /> Gợi ý cho Bạn (AI)
-                </Typography>
-                <Typography
-                  variant="caption"
-                  sx={{ mb: 2, display: "block", color: "#1565c0" }}
-                >
-                  Dựa trên phân tích nội dung (Content-Based Filtering).
+                  <RecommendIcon sx={{ mr: 1 }} /> Gợi ý (AI)
                 </Typography>
                 <Divider sx={{ mb: 2 }} />
-
-                {viewedIds.length === 0 ? (
+                {recommendations.length === 0 && (
                   <Typography
                     color="textSecondary"
                     align="center"
-                    sx={{ mt: 10 }}
+                    sx={{ mt: 5 }}
                   >
-                    Hãy đọc bài để AI học sở thích của bạn.
+                    Chưa đủ dữ liệu để gợi ý.
                   </Typography>
-                ) : recommendations.length === 0 ? (
-                  <Typography
-                    color="textSecondary"
-                    align="center"
-                    sx={{ mt: 10 }}
-                  >
-                    Không còn bài nào phù hợp hơn trong kho.
-                  </Typography>
-                ) : (
-                  recommendations.map((art) => (
-                    <ArticleCard
-                      key={art.id}
-                      article={art}
-                      isRecommendation={true}
-                      onClick={handleReadArticle}
-                    />
-                  ))
                 )}
+                {recommendations.map((art) => (
+                  <ArticleCard
+                    key={art.id}
+                    article={art}
+                    isRecommendation={true}
+                    onClick={handleReadArticle}
+                  />
+                ))}
               </Paper>
             </Grid>
           </Grid>
         </Grid>
       </Grid>
 
-      {/* === DIALOG ĐỌC BÁO === */}
+      {/* DIALOG ĐỌC BÁO (Giữ nguyên) */}
       <Dialog
         open={openDialog}
         onClose={handleCloseDialog}
@@ -303,39 +361,16 @@ function PersonalizationModule() {
       >
         {readingArticle && (
           <>
-            <DialogTitle sx={{ fontWeight: "bold", pr: 6 }}>
+            <DialogTitle sx={{ fontWeight: "bold" }}>
               {readingArticle.title}
             </DialogTitle>
-
             <DialogContent dividers>
-              <Box sx={{ mb: 2, display: "flex", gap: 1 }}>
-                <Chip
-                  label={readingArticle.category || "Tin tức"}
-                  color="primary"
-                  size="small"
-                />
-                {readingArticle.score && (
-                  <Chip
-                    label={`Độ phù hợp: ${Math.round(
-                      readingArticle.score * 100
-                    )}%`}
-                    color="success"
-                    size="small"
-                  />
-                )}
-              </Box>
-
               <Typography
                 variant="body1"
-                sx={{
-                  fontSize: "1.1rem",
-                  lineHeight: 1.8,
-                  whiteSpace: "pre-line",
-                }}
+                sx={{ fontSize: "1.1rem", lineHeight: 1.8 }}
               >
                 {readingArticle.content}
               </Typography>
-
               {readingArticle.image_url && (
                 <Box sx={{ mt: 3, textAlign: "center" }}>
                   <img
@@ -350,21 +385,15 @@ function PersonalizationModule() {
                 </Box>
               )}
             </DialogContent>
-
-            <DialogActions sx={{ p: 2, justifyContent: "space-between" }}>
+            <DialogActions>
               <Button
                 startIcon={<OpenInNewIcon />}
                 href={readingArticle.url}
                 target="_blank"
-                rel="noopener noreferrer"
               >
                 Đọc bài gốc
               </Button>
-              <Button
-                onClick={handleCloseDialog}
-                variant="contained"
-                startIcon={<CloseIcon />}
-              >
+              <Button onClick={handleCloseDialog} variant="contained">
                 Đóng
               </Button>
             </DialogActions>
@@ -374,5 +403,4 @@ function PersonalizationModule() {
     </Box>
   );
 }
-
 export default PersonalizationModule;

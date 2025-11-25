@@ -1,33 +1,49 @@
 # backend/database.py
-from sqlalchemy import create_engine, Column, Integer, String, Text
+from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, DateTime
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, relationship
+from datetime import datetime
 
-# Kết nối đến MySQL (XAMPP)
-# Lưu ý: charset=utf8mb4 để hỗ trợ icon và tiếng Việt tốt nhất
+# Kết nối MySQL (XAMPP)
 SQLALCHEMY_DATABASE_URL = "mysql+pymysql://root:@localhost/mediac_db?charset=utf8mb4"
 
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# Định nghĩa bảng bài báo (Thêm cột URL và Image để hiển thị đẹp hơn)
+# --- 1. BẢNG BÀI BÁO ---
 class ArticleDB(Base):
     __tablename__ = "articles"
     id = Column(Integer, primary_key=True, index=True)
-    category = Column(String(100)) # Lưu từ khóa tìm kiếm (ví dụ: "Bóng đá")
+    category = Column(String(100))
     title = Column(String(500))
-    content = Column(Text)         # Nội dung mô tả
-    url = Column(String(500), unique=True) # Link gốc (Unique để không lưu trùng)
-    image_url = Column(String(500)) # Link ảnh bìa
+    content = Column(Text)
+    url = Column(String(500), unique=True)
+    image_url = Column(String(500), nullable=True)
 
-# Hàm lấy DB session
+# --- 2. BẢNG NGƯỜI DÙNG (MỚI) ---
+class UserDB(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(50), unique=True, index=True)
+    # Quan hệ với bảng interactions
+    interactions = relationship("InteractionDB", back_populates="user")
+
+# --- 3. BẢNG TƯƠNG TÁC/LỊCH SỬ (MỚI) ---
+class InteractionDB(Base):
+    __tablename__ = "interactions"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    article_id = Column(Integer, ForeignKey("articles.id"))
+    timestamp = Column(DateTime, default=datetime.utcnow) # Lưu thời gian đọc
+    
+    user = relationship("UserDB", back_populates="interactions")
+    article = relationship("ArticleDB")
+
 def get_db():
     db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+    try: yield db
+    finally: db.close()
 
-# Tự động tạo bảng nếu chưa có
+# Tạo bảng mới (User & Interaction)
 Base.metadata.create_all(bind=engine)
