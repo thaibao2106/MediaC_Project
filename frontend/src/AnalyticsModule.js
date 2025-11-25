@@ -1,16 +1,9 @@
-// frontend/src/AnalyticsModule.js
-import axios from "axios";
-import Papa from "papaparse";
-import { useState } from "react";
-import { Pie } from "react-chartjs-2";
-
 import {
+  Article as ArticleIcon,
   Cancel as CancelIcon,
   CheckCircle as CheckCircleIcon,
   ExpandMore as ExpandMoreIcon,
   HelpOutline as HelpOutlineIcon,
-  Link as LinkIcon,
-  Newspaper as NewspaperIcon,
   Send as SendIcon,
   Tag as TagIcon,
   UploadFile as UploadFileIcon,
@@ -29,38 +22,26 @@ import {
   Link,
   List,
   ListItem,
+  ListItemButton,
   ListItemIcon,
   ListItemText,
-  Tooltip as MuiTooltip,
   Paper,
+  Skeleton,
   Slider,
   TextField,
   ToggleButton,
   ToggleButtonGroup,
   Typography,
 } from "@mui/material";
-
+import axios from "axios";
 import { ArcElement, Chart as ChartJS, Legend, Tooltip } from "chart.js";
+import Papa from "papaparse";
+import { useState } from "react";
+import { Pie } from "react-chartjs-2";
+
 ChartJS.register(ArcElement, Tooltip, Legend);
 
 const API_BASE_URL = "http://localhost:8000/analytics";
-
-// === HÀM HELPER XỬ LÝ LỖI (ĐỂ SỬA LỖI MÀN HÌNH ĐỎ) ===
-const getErrorMessage = (error) => {
-  if (error.response?.data?.detail) {
-    // Lỗi từ FastAPI (HTTPException)
-    return error.response.data.detail;
-  }
-  if (error.response?.data?.message) {
-    // Lỗi 4xx/5xx từ API (ví dụ: NewsAPI)
-    return error.response.data.message;
-  }
-  if (error.message) {
-    // Lỗi JS (Network error, etc.)
-    return error.message;
-  }
-  return "Lỗi không xác định.";
-};
 
 function AnalyticsModule() {
   const [text, setText] = useState("");
@@ -78,68 +59,101 @@ function AnalyticsModule() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  const handleInputTypeChange = (event, newType) => {
-    if (newType !== null) {
-      setInputType(newType);
+  // State cho Reader View (Đọc báo bên phải)
+  const [readingArticle, setReadingArticle] = useState(null); // Bài báo đang đọc
+  const [isReadingLoading, setIsReadingLoading] = useState(false); // Loading riêng cho khung đọc
+  const [selectedUrl, setSelectedUrl] = useState(""); // URL đang chọn để highlight
+
+  const handleInputTypeChange = (e, n) => {
+    if (n) {
+      setInputType(n);
       setError(null);
       setArticles([]);
       setClusterResults(null);
+      setReadingArticle(null);
     }
   };
-  const handleFileChange = (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-    setFileName(file.name);
-    setIsLoading(true);
-    Papa.parse(file, {
-      complete: (res) => {
-        const c = res.data
-          .slice(1)
-          .map((r) => r[0])
-          .filter((t) => t && t.trim());
-        setText(c.join("\n"));
-        setIsLoading(false);
-      },
-      error: (err) => {
-        alert("Lỗi CSV");
-        setIsLoading(false);
-      },
-    });
+  const handleFileChange = (e) => {
+    const f = e.target.files[0];
+    if (f) {
+      setFileName(f.name);
+      setIsLoading(true);
+      Papa.parse(f, {
+        complete: (r) => {
+          setText(
+            r.data
+              .slice(1)
+              .map((x) => x[0])
+              .filter((y) => y && y.trim())
+              .join("\n")
+          );
+          setIsLoading(false);
+        },
+        error: () => {
+          alert("Lỗi CSV");
+          setIsLoading(false);
+        },
+      });
+    }
   };
 
-  // Hàm xử lý kết quả
-  const processResults = (
-    sentiments,
-    topics,
-    fetchedArticles = [],
-    fetchedClusters = null
-  ) => {
-    const positive = sentiments.filter((r) => r.label === "Tích cực").length;
-    const negative = sentiments.filter((r) => r.label === "Tiêu cực").length;
-    const neutral = sentiments.length - positive - negative;
+  const processResults = (sent, top, arts = [], clust = null) => {
+    const pos = sent.filter((r) => r.label === "Tích cực").length;
+    const neg = sent.filter((r) => r.label === "Tiêu cực").length;
     setSentimentCounts({
-      positive,
-      negative,
-      neutral,
-      total: sentiments.length,
+      positive: pos,
+      negative: neg,
+      neutral: sent.length - pos - neg,
+      total: sent.length,
     });
     setSentimentData({
       labels: ["Tích cực", "Tiêu cực", "Trung lập"],
       datasets: [
         {
-          data: [positive, negative, neutral],
+          data: [pos, neg, sent.length - pos - neg],
           backgroundColor: ["#2e7d32", "#d32f2f", "#ffc107"],
           borderColor: "#fff",
           borderWidth: 1,
         },
       ],
     });
-    setTopicData(topics);
-    setArticles(fetchedArticles);
-    setClusterResults(fetchedClusters);
+    setTopicData(top);
+    setArticles(arts);
+    setClusterResults(clust);
   };
 
-  // Hàm Phân tích chính
+  // Hàm click vào bài báo để đọc
+  const handleArticleClick = async (article) => {
+    setSelectedUrl(article.url);
+    setReadingArticle(null); // Reset khung đọc
+    setIsReadingLoading(true);
+
+    try {
+      // Gọi API /analyze-url để cào nội dung chi tiết
+      const res = await axios.post(`${API_BASE_URL}/url`, { url: article.url });
+      if (res.data.status === "success") {
+        setReadingArticle({
+          title: article.title,
+          content: res.data.content, // Nội dung chi tiết từ Selenium/BS4
+          url: article.url,
+          sentiment: res.data.sentiments[0], // Cảm xúc của bài này
+        });
+      } else {
+        setReadingArticle({
+          title: "Lỗi",
+          content: res.data.message || "Không thể tải nội dung bài báo.",
+        });
+      }
+    } catch (err) {
+      setReadingArticle({
+        title: "Lỗi",
+        content: "Không thể kết nối để tải bài báo.",
+      });
+    } finally {
+      setIsReadingLoading(false);
+    }
+  };
+
   const handleAnalyze = async () => {
     setIsLoading(true);
     setError(null);
@@ -148,6 +162,7 @@ function AnalyticsModule() {
     setSentimentCounts(null);
     setArticles([]);
     setClusterResults(null);
+    setReadingArticle(null);
     try {
       if (inputType === "news") {
         if (!keyword.trim()) {
@@ -155,47 +170,41 @@ function AnalyticsModule() {
           setIsLoading(false);
           return;
         }
-        const response = await axios.post(`${API_BASE_URL}/news`, {
-          keyword: keyword,
+        const res = await axios.post(`${API_BASE_URL}/news`, {
+          keyword,
           limit: 40,
         });
-        if (response.data.status === "success") {
-          if (response.data.message) setError(response.data.message); // Hiển thị thông báo (ví dụ: không tìm thấy)
+        if (res.data.status === "success")
           processResults(
-            response.data.sentiments,
-            response.data.topics,
-            response.data.articles
+            res.data.sentiments,
+            res.data.topics,
+            res.data.articles
           );
-        } else {
-          setError(response.data.message);
-        }
+        else setError(res.data.message);
       } else if (inputType === "url") {
         if (!url.trim()) {
           setError("Nhập URL.");
           setIsLoading(false);
           return;
         }
-        try {
-          new URL(url);
-        } catch (_) {
-          setError("URL không hợp lệ.");
-          setIsLoading(false);
-          return;
-        }
-        const response = await axios.post(`${API_BASE_URL}/url`, { url: url });
-        if (response.data.status === "success") {
-          processResults(response.data.sentiments, response.data.topics);
-        } else {
-          setError(response.data.message);
-        }
+        const res = await axios.post(`${API_BASE_URL}/url`, { url });
+        if (res.data.status === "success") {
+          processResults(res.data.sentiments, res.data.topics);
+          // Tự động hiển thị nội dung bên phải luôn
+          setReadingArticle({
+            title: "Nội dung từ URL",
+            content: res.data.content,
+            sentiment: res.data.sentiments[0],
+          });
+        } else setError(res.data.message);
       } else {
-        const lines = text.split("\n").filter((line) => line.trim() !== "");
-        if (lines.length === 0) {
+        const lines = text.split("\n").filter((l) => l.trim());
+        if (!lines.length) {
           setError("Không có dữ liệu.");
           setIsLoading(false);
           return;
         }
-        const [sentimentRes, topicRes, clusterRes] = await Promise.all([
+        const [res1, res2, res3] = await Promise.all([
           axios.post(`${API_BASE_URL}/sentiment`, { texts: lines }),
           axios.post(`${API_BASE_URL}/topics`, { texts: lines }),
           axios.post(`${API_BASE_URL}/cluster`, {
@@ -203,39 +212,24 @@ function AnalyticsModule() {
             num_clusters: numClusters,
           }),
         ]);
-        if (
-          sentimentRes.data.status === "success" &&
-          topicRes.data.status === "success" &&
-          clusterRes.data.status === "success"
-        ) {
+        if (res1.data.status === "success")
           processResults(
-            sentimentRes.data.results,
-            topicRes.data.topics,
+            res1.data.results,
+            res2.data.topics,
             [],
-            clusterRes.data.clusters
+            res3.data.clusters
           );
-        } else {
-          let errorMessages = [];
-          if (sentimentRes.data.status !== "success")
-            errorMessages.push(sentimentRes.data.message || "Lỗi Sentiment");
-          if (topicRes.data.status !== "success")
-            errorMessages.push(topicRes.data.message || "Lỗi Topic");
-          if (clusterRes.data.status !== "success")
-            errorMessages.push(clusterRes.data.message || "Lỗi Cluster");
-          setError("Lỗi khi phân tích: " + errorMessages.join("; "));
-        }
+        else setError("Lỗi phân tích.");
       }
     } catch (err) {
-      // <-- SỬA LỖI Ở ĐÂY
-      console.error("Lỗi:", err);
-      setError(getErrorMessage(err)); // Dùng hàm helper
+      setError(err.response?.data?.detail || "Lỗi không xác định.");
     } finally {
       setIsLoading(false);
     }
   };
 
-  const getPercentage = (count, total) =>
-    total === 0 ? "0%" : `${((count / total) * 100).toFixed(1)}%`;
+  const getPercentage = (c, t) =>
+    t === 0 ? "0%" : `${((c / t) * 100).toFixed(1)}%`;
   const isAnalyzeDisabled = () =>
     isLoading ||
     (inputType === "news"
@@ -259,8 +253,9 @@ function AnalyticsModule() {
           {error}
         </Alert>
       )}
+
       <Grid container spacing={3}>
-        {/* === CỘT 1: NHẬP LIỆU (md={3}) === */}
+        {/* CỘT 1: INPUT (Giữ nguyên) */}
         <Grid item xs={12} md={3}>
           <Paper
             sx={{
@@ -311,7 +306,7 @@ function AnalyticsModule() {
                   sx={{ py: 2, mb: 1 }}
                 >
                   {" "}
-                  Chọn file CSV{" "}
+                  Chọn CSV{" "}
                   <input
                     type="file"
                     hidden
@@ -319,11 +314,8 @@ function AnalyticsModule() {
                     onChange={handleFileChange}
                   />{" "}
                 </Button>{" "}
-                <Typography variant="body2" color="textSecondary">
-                  {fileName || "Chưa chọn tệp."}
-                </Typography>{" "}
-                <Typography variant="caption" color="textSecondary">
-                  *Đọc cột đầu tiên.
+                <Typography variant="body2">
+                  {fileName || "Chưa chọn file."}
                 </Typography>{" "}
               </Box>
             )}
@@ -331,18 +323,11 @@ function AnalyticsModule() {
               <Box sx={{ flexGrow: 1, minHeight: 280 }}>
                 {" "}
                 <TextField
-                  id="keyword-input"
-                  label="Nhập chủ đề/từ khóa"
-                  placeholder="Ví dụ: Lạm phát..."
+                  label="Nhập từ khóa (VD: Lạm phát)"
                   variant="outlined"
                   fullWidth
                   value={keyword}
                   onChange={(e) => setKeyword(e.target.value)}
-                  InputProps={{
-                    startAdornment: (
-                      <NewspaperIcon sx={{ mr: 1, color: "text.secondary" }} />
-                    ),
-                  }}
                 />{" "}
               </Box>
             )}
@@ -350,32 +335,22 @@ function AnalyticsModule() {
               <Box sx={{ flexGrow: 1, minHeight: 280 }}>
                 {" "}
                 <TextField
-                  id="url-input"
                   label="Dán URL bài báo"
-                  placeholder="https://..."
                   variant="outlined"
                   fullWidth
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
-                  InputProps={{
-                    startAdornment: (
-                      <LinkIcon sx={{ mr: 1, color: "text.secondary" }} />
-                    ),
-                  }}
                 />{" "}
               </Box>
             )}
             {(inputType === "text" || inputType === "file") && (
               <Box sx={{ mt: 2, px: 1 }}>
                 {" "}
-                <Typography gutterBottom variant="caption">
-                  Số nhóm (Cluster):
-                </Typography>{" "}
+                <Typography variant="caption">Số cụm:</Typography>{" "}
                 <Slider
                   value={numClusters}
                   onChange={(e, val) => setNumClusters(val)}
                   step={1}
-                  marks
                   min={2}
                   max={8}
                   valueLabelDisplay="auto"
@@ -387,7 +362,7 @@ function AnalyticsModule() {
               endIcon={<SendIcon />}
               onClick={handleAnalyze}
               disabled={isAnalyzeDisabled()}
-              sx={{ mt: "auto", py: 1.5, fontSize: "1.1rem" }}
+              sx={{ mt: "auto", py: 1.5 }}
             >
               {" "}
               Phân tích{" "}
@@ -395,251 +370,262 @@ function AnalyticsModule() {
           </Paper>
         </Grid>
 
-        {/* === CỘT 2: PHÂN TÍCH CẢM XÚC (md={4}) === */}
-        <Grid item xs={12} md={4}>
-          <Paper
-            sx={{
-              p: 2,
-              height: "calc(100vh - 120px)",
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            <Typography variant="h6" gutterBottom>
-              Phân tích Cảm xúc
-            </Typography>
-            {sentimentData ? (
-              <Box
-                sx={{
-                  height: "50%",
-                  display: "flex",
-                  justifyContent: "center",
-                  mb: 1,
-                }}
-              >
-                <Pie
-                  data={sentimentData}
-                  options={{
-                    maintainAspectRatio: false,
-                    plugins: { legend: { position: "bottom" } },
-                  }}
-                />
-              </Box>
-            ) : (
-              <Box
-                sx={{
-                  height: "50%",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Typography color="textSecondary">Chưa có dữ liệu</Typography>
-              </Box>
-            )}
-            <Divider sx={{ mb: 1 }} />
-            {sentimentCounts ? (
-              <List
-                dense
-                sx={{ height: "calc(50% - 25px)", overflowY: "auto" }}
-              >
-                <ListItem>
-                  <ListItemIcon>
-                    <CheckCircleIcon color="success" />
-                  </ListItemIcon>
-                  <ListItemText
-                    primary="Tích cực"
-                    secondary={`${sentimentCounts.positive}/${sentimentCounts.total} bình luận`}
-                    primaryTypographyProps={{
-                      fontSize: "1.1rem",
-                      fontWeight: "500",
+        {/* CỘT 2 + 3: KẾT QUẢ */}
+        <Grid item xs={12} md={9}>
+          <Grid container spacing={3}>
+            {/* Hàng 1: Sentiment & Topic (Giữ nguyên) */}
+            <Grid item xs={12} sm={6}>
+              <Paper sx={{ p: 2, height: 400 }}>
+                <Typography variant="h6" gutterBottom>
+                  Phân tích Cảm xúc
+                </Typography>
+                {sentimentData ? (
+                  <Box
+                    sx={{
+                      height: "60%",
+                      display: "flex",
+                      justifyContent: "center",
                     }}
-                  />
-                  <Typography variant="h6" color="success.main">
-                    {getPercentage(
-                      sentimentCounts.positive,
-                      sentimentCounts.total
-                    )}
+                  >
+                    <Pie
+                      data={sentimentData}
+                      options={{ maintainAspectRatio: false }}
+                    />
+                  </Box>
+                ) : (
+                  <Typography color="textSecondary" align="center">
+                    Chưa có dữ liệu
                   </Typography>
-                </ListItem>
-                <ListItem>
-                  <ListItemIcon>
-                    <CancelIcon color="error" />
-                  </ListItemIcon>
-                  <ListItemText
-                    primary="Tiêu cực"
-                    secondary={`${sentimentCounts.negative}/${sentimentCounts.total} bình luận`}
-                    primaryTypographyProps={{
-                      fontSize: "1.1rem",
-                      fontWeight: "500",
-                    }}
-                  />
-                  <Typography variant="h6" color="error.main">
-                    {getPercentage(
-                      sentimentCounts.negative,
-                      sentimentCounts.total
-                    )}
+                )}
+                <Divider sx={{ my: 1 }} />
+                {sentimentCounts && (
+                  <Box sx={{ mt: 1, textAlign: "center" }}>
+                    <Chip
+                      label={`Tích cực: ${getPercentage(
+                        sentimentCounts.positive,
+                        sentimentCounts.total
+                      )}`}
+                      color="success"
+                      sx={{ mr: 1 }}
+                    />
+                    <Chip
+                      label={`Tiêu cực: ${getPercentage(
+                        sentimentCounts.negative,
+                        sentimentCounts.total
+                      )}`}
+                      color="error"
+                      sx={{ mr: 1 }}
+                    />
+                    <Chip
+                      label={`Trung lập: ${getPercentage(
+                        sentimentCounts.neutral,
+                        sentimentCounts.total
+                      )}`}
+                      color="warning"
+                    />
+                  </Box>
+                )}
+              </Paper>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <Paper sx={{ p: 2, height: 400, overflowY: "auto" }}>
+                <Typography variant="h6" gutterBottom>
+                  Chủ đề & Gom cụm
+                </Typography>
+                {topicData.length > 0 ? (
+                  <List dense>
+                    {topicData.map((t, i) => (
+                      <ListItem key={i}>
+                        <ListItemIcon>
+                          <TagIcon fontSize="small" color="primary" />
+                        </ListItemIcon>
+                        <ListItemText primary={t.text} />
+                      </ListItem>
+                    ))}
+                  </List>
+                ) : (
+                  <Typography color="textSecondary" align="center">
+                    Chưa có dữ liệu
                   </Typography>
-                </ListItem>
-                <ListItem>
-                  <ListItemIcon>
-                    <HelpOutlineIcon color="warning" />
-                  </ListItemIcon>
-                  <ListItemText
-                    primary="Trung lập"
-                    secondary={`${sentimentCounts.neutral}/${sentimentCounts.total} bình luận`}
-                    primaryTypographyProps={{
-                      fontSize: "1.1rem",
-                      fontWeight: "500",
-                    }}
-                  />
-                  <Typography variant="h6" color="warning.main">
-                    {getPercentage(
-                      sentimentCounts.neutral,
-                      sentimentCounts.total
-                    )}
-                  </Typography>
-                </ListItem>
-              </List>
-            ) : (
-              <Box
-                sx={{
-                  height: "calc(50% - 25px)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Typography color="textSecondary"></Typography>
-              </Box>
-            )}
-          </Paper>
-        </Grid>
-
-        {/* === CỘT 3: CHỦ ĐỀ & GOM CỤM (md={5}) === */}
-        <Grid item xs={12} md={5}>
-          <Paper sx={{ p: 2, height: "calc(50vh - 66px)", mb: 3 }}>
-            <Typography variant="h6" gutterBottom>
-              Chủ đề Nổi bật (Cụm từ)
-            </Typography>
-            {topicData.length > 0 ? (
-              <Box sx={{ height: "calc(100% - 40px)", overflowY: "auto" }}>
-                <List dense>
-                  {topicData.map((topic, index) => (
-                    <ListItem key={index} sx={{ py: 0 }}>
-                      <ListItemIcon sx={{ minWidth: 30 }}>
-                        <TagIcon fontSize="small" color="primary" />
-                      </ListItemIcon>
-                      <ListItemText primary={topic.text} />
-                    </ListItem>
-                  ))}
-                </List>
-              </Box>
-            ) : (
-              <Box
-                sx={{
-                  height: "calc(100% - 40px)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Typography color="textSecondary">Chưa có dữ liệu</Typography>
-              </Box>
-            )}
-          </Paper>
-          {clusterResults && (
-            <Paper sx={{ p: 2, height: "calc(50vh - 66px)" }}>
-              <Typography variant="h6" gutterBottom>
-                Gom cụm Khán giả (K-Means)
-              </Typography>
-              <Box sx={{ height: "calc(100% - 40px)", overflowY: "auto" }}>
-                {Object.entries(clusterResults).map(([clusterName, words]) => (
-                  <Accordion key={clusterName}>
-                    <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                      <Typography sx={{ fontWeight: "bold" }}>
-                        {clusterName}
-                      </Typography>
-                    </AccordionSummary>
-                    <AccordionDetails
-                      sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}
-                    >
-                      {words.map((word, idx) => (
-                        <Chip key={idx} label={word} size="small" />
-                      ))}
-                    </AccordionDetails>
-                  </Accordion>
-                ))}
-              </Box>
-            </Paper>
-          )}
-        </Grid>
-
-        {/* === HÀNG 2 (NẾU CÓ): DANH SÁCH BÀI BÁO === */}
-        {articles.length > 0 && inputType === "news" && (
-          <Grid item xs={12}>
-            {" "}
-            <Paper sx={{ p: 2, mt: clusterResults ? 0 : -3 }}>
-              {" "}
-              <Typography variant="h6" gutterBottom>
-                Bài báo ({articles.length})
-              </Typography>
-              <List sx={{ maxHeight: 400, overflow: "auto" }}>
-                {articles.map((article, index) => (
-                  <ListItem key={index} divider alignItems="flex-start">
-                    <ListItemIcon sx={{ minWidth: 35, mt: 0.5 }}>
-                      {" "}
-                      <MuiTooltip
-                        title={`Cảm xúc: ${article.sentiment_label} (${(
-                          article.sentiment_score * 100
-                        ).toFixed(1)}%)`}
-                        placement="top"
-                      >
-                        {" "}
-                        {getSentimentIcon(article.sentiment_label)}{" "}
-                      </MuiTooltip>{" "}
-                    </ListItemIcon>
-                    <ListItemText
-                      primary={
-                        <Typography
-                          component="span"
-                          sx={{ fontWeight: "bold" }}
+                )}
+                {clusterResults &&
+                  Object.entries(clusterResults).map(([k, v]) => (
+                    <Accordion key={k}>
+                      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                        <Typography fontWeight="bold">{k}</Typography>
+                      </AccordionSummary>
+                      <AccordionDetails>
+                        <Box
+                          sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}
                         >
-                          {" "}
-                          {article.title || "-"}{" "}
-                        </Typography>
-                      }
-                      secondary={
+                          {v.map((w, i) => (
+                            <Chip key={i} label={w} size="small" />
+                          ))}
+                        </Box>
+                      </AccordionDetails>
+                    </Accordion>
+                  ))}
+              </Paper>
+            </Grid>
+
+            {/* HÀNG 2: KHU VỰC ĐỌC BÁO (MỚI) */}
+            {(articles.length > 0 || readingArticle) && (
+              <Grid item xs={12}>
+                <Grid container spacing={2} sx={{ height: 600 }}>
+                  {" "}
+                  {/* Chiều cao cố định cho khu vực này */}
+                  {/* DANH SÁCH BÀI BÁO (BÊN TRÁI - 40%) */}
+                  {inputType === "news" && (
+                    <Grid item xs={12} md={4} sx={{ height: "100%" }}>
+                      <Paper
+                        sx={{
+                          height: "100%",
+                          display: "flex",
+                          flexDirection: "column",
+                        }}
+                      >
+                        <Box sx={{ p: 2, borderBottom: "1px solid #eee" }}>
+                          <Typography variant="h6">
+                            Danh sách bài ({articles.length})
+                          </Typography>
+                        </Box>
+                        <List sx={{ overflowY: "auto", flexGrow: 1 }}>
+                          {articles.map((article, index) => (
+                            <ListItemButton
+                              key={index}
+                              divider
+                              selected={selectedUrl === article.url}
+                              onClick={() => handleArticleClick(article)}
+                              alignItems="flex-start"
+                            >
+                              <ListItemIcon sx={{ minWidth: 30, mt: 0.5 }}>
+                                {getSentimentIcon(article.sentiment_label)}
+                              </ListItemIcon>
+                              <ListItemText
+                                primary={
+                                  <Typography variant="body2" fontWeight="bold">
+                                    {article.title}
+                                  </Typography>
+                                }
+                                secondary={
+                                  <Typography
+                                    variant="caption"
+                                    color="text.secondary"
+                                    sx={{
+                                      display: "-webkit-box",
+                                      WebkitLineClamp: 2,
+                                      WebkitBoxOrient: "vertical",
+                                      overflow: "hidden",
+                                    }}
+                                  >
+                                    {article.description}
+                                  </Typography>
+                                }
+                              />
+                            </ListItemButton>
+                          ))}
+                        </List>
+                      </Paper>
+                    </Grid>
+                  )}
+                  {/* KHUNG ĐỌC (BÊN PHẢI - 60% HOẶC 100% NẾU LÀ URL MODE) */}
+                  <Grid
+                    item
+                    xs={12}
+                    md={inputType === "news" ? 8 : 12}
+                    sx={{ height: "100%" }}
+                  >
+                    <Paper
+                      sx={{
+                        height: "100%",
+                        p: 3,
+                        overflowY: "auto",
+                        bgcolor: "#f9f9f9",
+                      }}
+                    >
+                      {isReadingLoading ? (
+                        <Box sx={{ width: "100%" }}>
+                          <Skeleton height={40} width="80%" />
+                          <Skeleton height={20} width="40%" sx={{ mb: 2 }} />
+                          <Skeleton count={5} />
+                          <Skeleton count={5} />
+                        </Box>
+                      ) : readingArticle ? (
                         <>
-                          {" "}
+                          <Chip
+                            icon={getSentimentIcon(
+                              readingArticle.sentiment?.label || "Trung lập"
+                            )}
+                            label={`Đánh giá AI: ${
+                              readingArticle.sentiment?.label || "Chưa rõ"
+                            } (${
+                              readingArticle.sentiment?.score
+                                ? (
+                                    readingArticle.sentiment.score * 100
+                                  ).toFixed(1)
+                                : 0
+                            }%)`}
+                            sx={{ mb: 2 }}
+                            variant="outlined"
+                          />
                           <Typography
-                            component="span"
-                            variant="body2"
-                            color="text.primary"
-                            sx={{ display: "block" }}
+                            variant="h5"
+                            gutterBottom
+                            sx={{ fontWeight: "bold", color: "#2c3e50" }}
                           >
-                            {" "}
-                            {article.description || "-"}{" "}
-                          </Typography>{" "}
+                            {readingArticle.title}
+                          </Typography>
                           <Link
-                            href={article.url}
+                            href={readingArticle.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            variant="caption"
-                            underline="hover"
+                            sx={{
+                              mb: 3,
+                              display: "block",
+                              fontSize: "0.85rem",
+                            }}
                           >
-                            {" "}
-                            {article.url}{" "}
-                          </Link>{" "}
+                            Xem bài gốc tại đây
+                          </Link>
+                          <Typography
+                            variant="body1"
+                            sx={{
+                              whiteSpace: "pre-line",
+                              lineHeight: 1.8,
+                              fontSize: "1.1rem",
+                              color: "#333",
+                            }}
+                          >
+                            {readingArticle.content}
+                          </Typography>
                         </>
-                      }
-                    />
-                  </ListItem>
-                ))}
-              </List>
-            </Paper>{" "}
+                      ) : (
+                        <Box
+                          sx={{
+                            height: "100%",
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            opacity: 0.6,
+                          }}
+                        >
+                          <ArticleIcon sx={{ fontSize: 60, mb: 2 }} />
+                          <Typography variant="h6">
+                            Chọn một bài báo để đọc chi tiết
+                          </Typography>
+                          <Typography variant="body2">
+                            Nội dung sẽ được AI tổng hợp và phân tích tại đây.
+                          </Typography>
+                        </Box>
+                      )}
+                    </Paper>
+                  </Grid>
+                </Grid>
+              </Grid>
+            )}
           </Grid>
-        )}
+        </Grid>
       </Grid>
     </Box>
   );

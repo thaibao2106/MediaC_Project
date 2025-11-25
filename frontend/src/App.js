@@ -1,6 +1,7 @@
 // frontend/src/App.js
 import AssessmentIcon from "@mui/icons-material/Assessment";
 import CreateIcon from "@mui/icons-material/Create";
+import PsychologyIcon from "@mui/icons-material/Psychology";
 import {
   AppBar,
   Box,
@@ -16,8 +17,9 @@ import React, { useState } from "react";
 // === IMPORT CÁC MODULE THẬT ===
 import AnalyticsModule from "./AnalyticsModule"; // Module 3
 import ContentStudioModule from "./ContentStudioModule"; // Module 1
+import PersonalizationModule from "./PersonalizationModule"; // Module 2 (Mới)
 
-// === Component Tab Panel (Hàm trợ giúp) ===
+// === Component Tab Panel ===
 function TabPanel(props) {
   const { children, value, index, ...other } = props;
   return (
@@ -40,7 +42,7 @@ function TabPanel(props) {
 
 // === APP CHÍNH ===
 function App() {
-  const [currentTab, setCurrentTab] = useState(0); // Bắt đầu ở Tab 0 (Phân tích)
+  const [currentTab, setCurrentTab] = useState(0);
 
   const handleTabChange = (event, newValue) => {
     setCurrentTab(newValue);
@@ -87,6 +89,11 @@ function App() {
                   icon={<CreateIcon />}
                   iconPosition="start"
                 />
+                <Tab
+                  label="Cá nhân hóa (AI)"
+                  icon={<PsychologyIcon />}
+                  iconPosition="start"
+                />
               </Tabs>
             </Box>
           </Toolbar>
@@ -94,14 +101,14 @@ function App() {
       </AppBar>
 
       <Container maxWidth={false} sx={{ px: 3 }}>
-        {/* Panel cho Tab 0 (Phân tích) */}
         <TabPanel value={currentTab} index={0}>
           <AnalyticsModule />
         </TabPanel>
-
-        {/* Panel cho Tab 1 (Sáng tạo) */}
         <TabPanel value={currentTab} index={1}>
           <ContentStudioModule />
+        </TabPanel>
+        <TabPanel value={currentTab} index={2}>
+          <PersonalizationModule />
         </TabPanel>
       </Container>
     </React.Fragment>
